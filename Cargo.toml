@@ -1,0 +1,48 @@
+[package]
+name = "bevy_asset_preprocess"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+description = "Headless CLI/library for pre-processing Bevy assets (compressed textures + mipmaps via CompressedImageSaver) outside a running App"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/pavlov-net/bevy_asset_preprocess"
+keywords = ["bevy", "asset", "ktx2", "texture", "compression"]
+categories = ["game-development", "command-line-utilities"]
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "bevy-asset-preprocess"
+path = "src/main.rs"
+required-features = ["cli"]
+
+[features]
+default = ["cli"]
+# CLI-only deps (walkdir for tree traversal, env_logger so the bin
+# emits Bevy's tracing output to stderr). Library consumers building
+# on top of `preprocess()` opt out via `default-features = false`.
+cli = ["dep:walkdir"]
+
+[dependencies]
+# bevy_image carries the `compressed_image_saver` saver added in
+# bevyengine/bevy#23567 (CTT backend, BCn/ASTC + auto mipmaps + zstd
+# → KTX2). bevy_asset gives us `save_using_saver` and the asset
+# source machinery; bevy_app + bevy_log are the minimal shell.
+bevy = { git = "https://github.com/bevyengine/bevy", default-features = false, features = [
+    "bevy_asset",
+    "bevy_log",
+    # `multi_threaded` puts both the `IoTaskPool` and `bevy_asset`'s
+    # `FileAssetReader` on real OS threads (vs. busy-spinning the
+    # local executor on the main thread). Bake throughput on a real
+    # asset tree is encoder-bound, but loads + saves still parallelize
+    # across the pool — important for large game asset libraries.
+    "multi_threaded",
+    "jpeg",
+    "png",
+    "ktx2",
+    "zstd_rust",
+    "compressed_image_saver",
+] }
+walkdir = { version = "2", optional = true }
