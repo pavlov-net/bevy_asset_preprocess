@@ -104,7 +104,7 @@ pub fn preprocess(
         if let Some(parent) = dst.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        link_or_copy(&path, &dst)?;
+        std::fs::copy(&path, &dst)?;
         stats.copied += 1;
     }
 
@@ -134,22 +134,6 @@ pub fn preprocess(
     stats.baked = baked;
     stats.failed = failed;
     Ok(stats)
-}
-
-/// Try `hard_link` first — passthrough files can be megabyte-scale
-/// (`.glb` / `.bin` / `.ogg` / …), so sharing inodes saves disk
-/// space without changing observable bytes. Falls back to `copy` on
-/// any error (cross-filesystem `EXDEV`, platforms without hardlinks).
-/// A pre-existing destination is unlinked first since `hard_link`
-/// won't overwrite.
-fn link_or_copy(src: &Path, dst: &Path) -> std::io::Result<()> {
-    if dst.exists() {
-        std::fs::remove_file(dst)?;
-    }
-    if std::fs::hard_link(src, dst).is_ok() {
-        return Ok(());
-    }
-    std::fs::copy(src, dst).map(|_| ())
 }
 
 /// Any I/O failure conservatively returns `false` so the caller falls
