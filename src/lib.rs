@@ -66,6 +66,17 @@ pub fn preprocess(
     }
     std::fs::create_dir_all(output)?;
 
+    // Canonicalize before handing paths to Bevy. `AssetPlugin::file_path`
+    // resolves relative paths against Bevy's base dir (BEVY_ASSET_ROOT →
+    // CARGO_MANIFEST_DIR → current_exe), not the user's cwd; absolute
+    // paths bypass the prefix entirely.
+    let input = std::fs::canonicalize(input)
+        .map_err(|e| format!("canonicalize input {}: {e}", input.display()))?;
+    let output = std::fs::canonicalize(output)
+        .map_err(|e| format!("canonicalize output {}: {e}", output.display()))?;
+    let input = input.as_path();
+    let output = output.as_path();
+
     // mtime floor: an output is "stale" if its mtime is older than
     // the input *or* the bake binary itself. Catches the "user upgraded
     // ctt / bumped saver settings, rebuilt the binary" case automatically.
