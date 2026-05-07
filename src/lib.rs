@@ -21,17 +21,14 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 use bevy::app::{App, AppExit, ScheduleRunnerPlugin, Startup, TaskPoolPlugin, Update};
-use bevy::asset::processor::{AssetProcessor, LoadTransformAndSave};
-use bevy::asset::transformer::IdentityAssetTransformer;
+use bevy::asset::processor::AssetProcessor;
 use bevy::asset::{AssetApp, AssetMode, AssetPlugin};
 use bevy::ecs::message::MessageWriter;
 use bevy::ecs::prelude::*;
-use bevy::image::{CompressedImageFormats, CompressedImageSaver, Image, ImageLoader, ImagePlugin};
+use bevy::image::{CompressedImageFormats, ImageLoader, ImagePlugin};
 use bevy::log::LogPlugin;
 use bevy::tasks::{IoTaskPool, Task};
 use bevy::utils::default;
-
-const IMAGE_EXTS: &[&str] = &["png", "jpg", "jpeg"];
 
 /// Counts of work units after a [`preprocess`] run.
 #[derive(Debug, Default, Clone, Copy)]
@@ -168,13 +165,11 @@ fn walk_inputs(root: &Path) -> Vec<PathBuf> {
 
 #[cfg(feature = "cli")]
 fn is_image(path: &Path) -> bool {
-    path.extension()
-        .and_then(|e| e.to_str())
-        .is_some_and(|ext| IMAGE_EXTS.contains(&ext))
+    matches!(
+        path.extension().and_then(|e| e.to_str()),
+        Some("png" | "jpg" | "jpeg")
+    )
 }
-
-type ImgProcessor =
-    LoadTransformAndSave<ImageLoader, IdentityAssetTransformer<Image>, CompressedImageSaver>;
 
 fn run_bake_app(input: &str, output: &str) {
     let mut app = App::new();
@@ -196,16 +191,17 @@ fn run_bake_app(input: &str, output: &str) {
         ImagePlugin::default(),
     ));
 
-    // ImagePlugin only pre-registers ImageLoader; the actual registration
-    // happens in bevy_render, which we don't pull in.
+    // ImagePlugin only `preregister_asset_loader`s ImageLoader (a name
+    // reservation); the real instance is normally registered by bevy_render,
+    // which we don't pull in. Register it manually.
+    //
+    // ImagePlugin::build *does* register and default the
+    // LoadTransformAndSave<ImageLoader, _, CompressedImageSaver> processor for
+    // png/jpeg/jpg when the `compressed_image_saver` feature is on. Don't
+    // re-register it — duplicate registration leaves get_processor's
+    // short_type_path table in Ambiguous(vec![same, same]) state and breaks
+    // every meta lookup.
     app.register_asset_loader(ImageLoader::new(CompressedImageFormats::empty()));
-
-    app.register_asset_processor::<ImgProcessor>(LoadTransformAndSave::from(
-        CompressedImageSaver::default(),
-    ));
-    for ext in IMAGE_EXTS {
-        app.set_default_asset_processor::<ImgProcessor>(ext);
-    }
 
     app.add_systems(Startup, start_exit_task);
     app.add_systems(Update, check_exit_task);
