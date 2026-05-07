@@ -48,7 +48,39 @@ bevy = { git = "https://github.com/bevyengine/bevy", default-features = false, f
     # Needed so loader names in source `.meta` files resolve at bake time.
     # See run_bake_app in src/lib.rs.
     "bevy_gltf",
-    "bevy_audio",
-    "vorbis",
 ] }
+
+# Same purpose as the loader features above: source `.meta` files
+# reference `bevy_seedling::sample::assets::SampleLoader`, so the
+# processor needs that loader registered. SeedlingPlugin opens a cpal
+# audio stream during PostStartup (that's when SampleLoader gets its
+# sample_rate and is registered with the AssetServer); there's no
+# lighter-weight registration path exposed by seedling today.
+bevy_seedling = { git = "https://github.com/CorvusPrudens/bevy_seedling", branch = "bevy-0.19", default-features = false, features = [
+    "ogg",
+] }
+
 walkdir = { version = "2", optional = true }
+
+# bevy_seedling depends on `bevy_app = "^0.19.0-dev"` etc., which only
+# resolve via git. Cargo only honors `[patch]` from the workspace root,
+# so consuming seedling as a git dep means we re-state every transitive
+# bevy_* sub-crate it touches. Plus the firewheel fork: seedling's
+# `bevy-0.19` branch needs `firewheel = { features = ["glam-32"] }` and
+# the `glam-32` feature only lives in Chris Biscardi's fork (Firewheel
+# PR #106) until it lands upstream.
+[patch.crates-io]
+bevy_app = { git = "https://github.com/bevyengine/bevy" }
+bevy_asset = { git = "https://github.com/bevyengine/bevy" }
+bevy_ecs = { git = "https://github.com/bevyengine/bevy" }
+bevy_log = { git = "https://github.com/bevyengine/bevy" }
+bevy_macro_utils = { git = "https://github.com/bevyengine/bevy" }
+bevy_math = { git = "https://github.com/bevyengine/bevy" }
+bevy_platform = { git = "https://github.com/bevyengine/bevy" }
+bevy_ptr = { git = "https://github.com/bevyengine/bevy" }
+bevy_reflect = { git = "https://github.com/bevyengine/bevy" }
+bevy_tasks = { git = "https://github.com/bevyengine/bevy" }
+bevy_time = { git = "https://github.com/bevyengine/bevy" }
+bevy_transform = { git = "https://github.com/bevyengine/bevy" }
+bevy_utils = { git = "https://github.com/bevyengine/bevy" }
+firewheel = { git = "https://github.com/ChristopherBiscardi/Firewheel", branch = "chris-0.19" }

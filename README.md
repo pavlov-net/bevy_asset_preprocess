@@ -29,9 +29,8 @@ plugins:
   CompressedImageSaver>` as the default processor for `png` / `jpg` /
   `jpeg` (this is `ImagePlugin`'s built-in behavior when the
   `compressed_image_saver` feature is on).
-- `GltfPlugin` and a manual `AudioLoader` registration — pulled in
-  solely so the processor can resolve `loader: "..."` strings inside
-  source `.meta` files.
+- `GltfPlugin` and `SeedlingPlugin` — pulled in solely so the processor
+  can resolve `loader: "..."` strings inside source `.meta` files.
 
 Other asset types (shaders, scenes, custom loaders, etc.) need their
 own plugin or `register_asset_loader` call added to `run_bake_app`,
@@ -74,8 +73,8 @@ uncompressed.
 - **clang** — `ctt-compressonator` (the encoder behind
   `CompressedImageSaver`) uses `-march=knl`, which GCC ≥ 15 doesn't
   recognize. Set `CXX=clang++` if the default compiler is GCC.
-- **Linux only:** `libasound2-dev` and `pkg-config` — `bevy_audio`
-  pulls in `rodio` with `playback`, which links ALSA.
+- **Linux only:** `libasound2-dev` and `pkg-config` — `bevy_seedling`
+  pulls in `firewheel`/`cpal`, which links ALSA.
 
 ## Caveats
 

@@ -23,7 +23,6 @@ use std::path::{Path, PathBuf};
 use bevy::app::{App, AppExit, ScheduleRunnerPlugin, Startup, TaskPoolPlugin, Update};
 use bevy::asset::processor::AssetProcessor;
 use bevy::asset::{AssetApp, AssetMode, AssetPlugin};
-use bevy::audio::{AudioLoader, AudioSource};
 use bevy::ecs::message::MessageWriter;
 use bevy::ecs::prelude::*;
 use bevy::gltf::GltfPlugin;
@@ -31,6 +30,7 @@ use bevy::image::{CompressedImageFormats, ImageLoader, ImagePlugin};
 use bevy::log::LogPlugin;
 use bevy::tasks::{IoTaskPool, Task};
 use bevy::utils::default;
+use bevy_seedling::SeedlingPlugin;
 
 /// Counts of work units after a [`preprocess`] run.
 #[derive(Debug, Default, Clone, Copy)]
@@ -193,15 +193,12 @@ fn run_bake_app(input: &str, output: &str) {
         ImagePlugin::default(),
         // Registered so the processor can resolve loader names from source
         // `.meta` files. We never load these — they fall through to the
-        // processor's byte-copy branch. AudioPlugin is *not* used because its
-        // build() opens the system audio device and adds per-tick systems that
-        // are pure waste for a one-shot bake; we register the loader manually
-        // below.
+        // processor's byte-copy branch. SeedlingPlugin opens cpal during
+        // PostStartup (that's how SampleLoader gets its sample_rate); seedling
+        // exposes no constructor for SampleLoader without a live audio context.
         GltfPlugin::default(),
+        SeedlingPlugin::default(),
     ));
-
-    app.init_asset::<AudioSource>()
-        .init_asset_loader::<AudioLoader>();
 
     // ImagePlugin only `preregister_asset_loader`s ImageLoader (a name
     // reservation); the real instance is normally registered by bevy_render,
