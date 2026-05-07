@@ -45,5 +45,10 @@ bevy = { git = "https://github.com/bevyengine/bevy", default-features = false, f
     "ktx2",
     "zstd_rust",
     "compressed_image_saver",
+    # Needed so loader names in source `.meta` files resolve at bake time.
+    # See run_bake_app in src/lib.rs.
+    "bevy_gltf",
+    "bevy_audio",
+    "vorbis",
 ] }
 walkdir = { version = "2", optional = true }

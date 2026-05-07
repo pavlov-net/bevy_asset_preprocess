@@ -1,16 +1,16 @@
 # bevy_asset_preprocess
 
-Headless CLI + library for pre-processing Bevy assets. Walks a
-source asset tree, compresses every PNG/JPEG into a `.ktx2`
-(BCn/ASTC + mipmaps + zstd via [`CompressedImageSaver`][saver]),
-byte-copies everything else, and writes the result tree to a
-sibling directory.
+Headless CLI + library for pre-processing Bevy assets. Drives Bevy's
+[`AssetProcessor`][ap] from a one-shot binary so you can bake compressed
+textures (and process every other asset type whose loader you have a
+plugin for) at build time, without launching a game.
 
-[saver]: https://docs.rs/bevy_image/latest/bevy_image/struct.CompressedImageSaver.html
+[ap]: https://docs.rs/bevy_asset/latest/bevy_asset/processor/struct.AssetProcessor.html
 
 ```bash
 cargo run --release -- assets/ assets-baked/
-# Skips inputs whose output is fresh; pass --force to rebake.
+# Hash-based change detection skips unchanged inputs; pass --force to
+# reprocess every image regardless of cache.
 cargo run --release -- --force assets/ assets-baked/
 ```
 
@@ -19,41 +19,72 @@ Status: **prototype**. Tracks bevy `main` — depends on the
 
 [pr]: https://github.com/bevyengine/bevy/pull/23567
 
-## Why
+## What it does
 
-Bevy's `AssetMode::Processed` runs in-app as a background task and
-exposes no "processing finished" signal — unworkable as a CI bake
-step. The alternative is rolling your own saver and walking the tree
-yourself, which reinvents Bevy's loader/saver wheel.
+The crate spins up a minimal `App` (no renderer, no window, no game
+logic) configured with `AssetMode::Processed` and a small set of asset
+plugins:
 
-This crate is a third option: a tiny headless `App` (no renderer, no
-window, no game logic) that uses Bevy's public asset APIs
-([`AssetServer`][as], [`save_using_saver`][sas]) to drive the saver
-directly, and exits cleanly when every input we asked for has been
-saved.
+- `ImagePlugin` — registers `LoadTransformAndSave<ImageLoader, _,
+  CompressedImageSaver>` as the default processor for `png` / `jpg` /
+  `jpeg` (this is `ImagePlugin`'s built-in behavior when the
+  `compressed_image_saver` feature is on).
+- `GltfPlugin` and a manual `AudioLoader` registration — pulled in
+  solely so the processor can resolve `loader: "..."` strings inside
+  source `.meta` files.
 
-[as]: https://docs.rs/bevy_asset/latest/bevy_asset/struct.AssetServer.html
-[sas]: https://docs.rs/bevy_asset/latest/bevy_asset/saver/fn.save_using_saver.html
+Other asset types (shaders, scenes, custom loaders, etc.) need their
+own plugin or `register_asset_loader` call added to `run_bake_app`,
+otherwise their source `.meta` files fail to deserialize.
+
+`AssetProcessor` then walks the input tree and produces an output tree
+at the same relative paths. Images get compressed to KTX2 in place
+(`texture.png` → `output/texture.png` containing KTX2 bytes), with a
+`.meta` sidecar carrying the runtime `ImageLoaderSettings`. Non-image
+files fall through the processor's no-processor branch and are
+byte-copied unchanged with a matching `.meta`.
+
+The game then runs in `AssetMode::Processed` and reads from the output
+tree; the `.meta` sidecars tell the asset server which loader to use
+for each file.
+
+## Source `.meta` files are authoritative
+
+`AssetProcessor` reads source `.meta` files to decide what to do with
+each asset. There are three actions:
+
+- `AssetAction::Process { processor, settings }` — run the named
+  processor (e.g. `LoadTransformAndSave<...>` to compress an image).
+- `AssetAction::Load { loader, settings }` — byte-copy the file and
+  emit a meta in the output that points at the named loader.
+- `AssetAction::Ignore` — skip the file entirely.
+
+When a file has no source `.meta`, the processor synthesizes one based
+on extension: it picks a default processor if one is registered for the
+extension, otherwise a default loader, otherwise `Ignore`.
+
+**Practical consequence:** if you want a `.png` *compressed*, its
+source meta must say `Process` (or there must be no source meta — the
+processor's default for `png`/`jpg`/`jpeg` is the compression
+processor). If the source meta says `Load`, the file is byte-copied
+uncompressed.
+
+## Build dependencies
+
+- **clang** — `ctt-compressonator` (the encoder behind
+  `CompressedImageSaver`) uses `-march=knl`, which GCC ≥ 15 doesn't
+  recognize. Set `CXX=clang++` if the default compiler is GCC.
+- **Linux only:** `libasound2-dev` and `pkg-config` — `bevy_audio`
+  pulls in `rodio` with `playback`, which links ALSA.
 
 ## Caveats
 
 ### Normal maps + BCn don't preserve unit length
 
-The saver has no "this is a normal map" hint; CTT compresses every
-channel independently. Renormalize in your shader after
-sampling/blending, or pre-compress with a normal-aware tool. Bevy's
-in-engine usage of the saver has the same property.
-
-### `.meta` sidecars are written
-
-`CompressedImageSaver` writes `<output>.ktx2` *and*
-`<output>.ktx2.meta` holding the runtime-needed `ImageLoaderSettings`
-(sampler defaults, sRGB flag, etc). Pipelines that don't ship `.meta`
-files have two options:
-
-- Drop them post-bake (`find <out> -name '*.meta' -delete`).
-- Ship them — they're tiny (~360 bytes each) and let you delete the
-  per-load `with_settings(...)` runtime overrides at the call site.
+`CompressedImageSaver` has no "this is a normal map" hint; CTT
+compresses every channel independently. Renormalize in your shader
+after sampling/blending, or pre-compress with a normal-aware tool.
+Bevy's in-engine usage of the saver has the same property.
 
 ### Wasm format choice
 
@@ -62,12 +93,17 @@ Safari/mobile. If you target broad wasm, you'll want
 `compressed_image_saver_universal` (UASTC/Basis, no mipmaps) — Bevy
 doesn't yet have a story for serving format-variants per device.
 
-### CTT compile cost
+### `.meta` sidecars in output
 
-`compressed_image_saver` pulls in CTT (ISPC encoders), which adds
-non-trivial cold-cache CI time (~3–4 minutes on an 8-core runner
-from scratch; ~30 seconds incremental). Cache the target dir
-aggressively — `Swatinem/rust-cache` works fine.
+`AssetProcessor` writes a `.meta` next to every processed asset
+holding the loader settings (sampler, sRGB flag, etc.). They're tiny
+and load-time authoritative; ship them with your processed assets.
+
+### `imported_assets/` directory
+
+The processor writes a transaction log to
+`<output>/imported_assets/log` for crash recovery. It's harmless and
+not needed by the game at runtime, but currently isn't cleaned up.
 
 ## Library use
 
