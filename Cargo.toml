@@ -32,6 +32,7 @@ cli = ["dep:walkdir"]
 # source machinery; bevy_app + bevy_log are the minimal shell.
 bevy = { git = "https://github.com/bevyengine/bevy", default-features = false, features = [
     "bevy_asset",
+    "asset_processor",
     "bevy_log",
     # `multi_threaded` puts both the `IoTaskPool` and `bevy_asset`'s
     # `FileAssetReader` on real OS threads (vs. busy-spinning the

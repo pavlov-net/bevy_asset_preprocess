@@ -1,9 +1,4 @@
-//! `bevy-asset-preprocess [--force] <input_dir> <output_dir>`
-//!
-//! Walks `input_dir`, compresses every PNG/JPEG into a `.ktx2`
-//! (BCn/ASTC + mipmaps + zstd via `bevy_image::CompressedImageSaver`),
-//! byte-copies everything else, and writes the result tree into
-//! `output_dir`. See the crate-level docs for the design.
+//! CLI wrapper — see [`bevy_asset_preprocess`] for the full design.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -17,10 +12,10 @@ fn main() -> ExitCode {
         match arg.as_str() {
             "--force" | "-f" => config.force = true,
             "--help" | "-h" => {
-                eprintln!(
+                println!(
                     "usage: bevy-asset-preprocess [--force] <input_dir> <output_dir>\n\n\
-                     By default, outputs whose mtime is newer than both the input and the\n\
-                     bake binary are left alone. Pass --force to rebake everything."
+                     By default, unchanged assets are skipped via hash-based change detection.\n\
+                     Pass --force to reprocess images regardless of cache."
                 );
                 return ExitCode::SUCCESS;
             }
@@ -39,10 +34,8 @@ fn main() -> ExitCode {
     match bevy_asset_preprocess::preprocess(input, output, &config) {
         Ok(stats) => {
             eprintln!(
-                "bevy-asset-preprocess: {} baked, {} copied, {} skipped (fresh), {} failed ({} → {})",
+                "bevy-asset-preprocess: {} baked, {} failed ({} → {})",
                 stats.baked,
-                stats.copied,
-                stats.skipped_fresh,
                 stats.failed,
                 input.display(),
                 output.display(),
