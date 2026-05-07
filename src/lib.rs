@@ -20,17 +20,20 @@
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
-use bevy::app::{App, AppExit, ScheduleRunnerPlugin, Startup, TaskPoolPlugin, Update};
+use bevy::MinimalPlugins;
+use bevy::app::{App, AppExit, Startup, Update};
+use bevy::asset::io::Reader;
 use bevy::asset::processor::AssetProcessor;
-use bevy::asset::{AssetApp, AssetMode, AssetPlugin};
+use bevy::asset::{Asset, AssetApp, AssetLoader, AssetMode, AssetPlugin, LoadContext};
 use bevy::ecs::message::MessageWriter;
 use bevy::ecs::prelude::*;
 use bevy::gltf::GltfPlugin;
 use bevy::image::{CompressedImageFormats, ImageLoader, ImagePlugin};
 use bevy::log::LogPlugin;
+use bevy::reflect::TypePath;
+use bevy::shader::{Shader, ShaderLoader};
 use bevy::tasks::{IoTaskPool, Task};
 use bevy::utils::default;
-use bevy_seedling::SeedlingPlugin;
 
 /// Counts of work units after a [`preprocess`] run.
 #[derive(Debug, Default, Clone, Copy)]
@@ -177,11 +180,8 @@ fn run_bake_app(input: &str, output: &str) {
     let mut app = App::new();
 
     app.add_plugins((
-        TaskPoolPlugin::default(),
+        MinimalPlugins,
         LogPlugin::default(),
-        // `ScheduleRunnerPlugin::default()` runs schedules in a tight loop and
-        // returns only when `AppExit` is written — making `app.run()` blocking.
-        ScheduleRunnerPlugin::default(),
         AssetPlugin {
             file_path: input.to_owned(),
             processed_file_path: output.to_owned(),
@@ -191,18 +191,28 @@ fn run_bake_app(input: &str, output: &str) {
             ..default()
         },
         ImagePlugin::default(),
-        // Registered so the processor can resolve loader names from source
-        // `.meta` files. We never load these — they fall through to the
-        // processor's byte-copy branch. SeedlingPlugin opens cpal during
-        // PostStartup (that's how SampleLoader gets its sample_rate); seedling
-        // exposes no constructor for SampleLoader without a live audio context.
+        // Registered so the processor can resolve `loader: "..."` names in
+        // source `.meta` files. We never load these — they fall through to
+        // the processor's byte-copy branch.
         GltfPlugin::default(),
-        SeedlingPlugin::default(),
     ));
+
+    app.init_asset::<SeedlingSampleStubAsset>()
+        .register_asset_loader(SeedlingSampleLoaderStub);
+
+    // ShaderLoader is normally registered by `RenderPlugin` (which we don't
+    // pull in). Register it manually so source `.meta` files referencing
+    // `bevy_shader::shader::ShaderLoader` deserialize, and so .wgsl/.vert/etc.
+    // without source metas get a Load meta synthesized instead of Ignore.
+    app.init_asset::<Shader>()
+        .init_asset_loader::<ShaderLoader>();
 
     // ImagePlugin only `preregister_asset_loader`s ImageLoader (a name
     // reservation); the real instance is normally registered by bevy_render,
-    // which we don't pull in. Register it manually.
+    // which we don't pull in. Register it manually. The `empty()` arg lists
+    // GPU-side compressed *input* formats we accept (e.g. existing KTX2 in
+    // the source tree) — we transcode PNG/JPEG → KTX2 here, never read a
+    // pre-compressed input, so empty is correct.
     //
     // ImagePlugin::build *does* register and default the
     // LoadTransformAndSave<ImageLoader, _, CompressedImageSaver> processor for
@@ -234,5 +244,54 @@ fn check_exit_task(task: Option<Res<ExitTask>>, mut app_exit: MessageWriter<AppE
         && task.0.is_finished()
     {
         app_exit.write(AppExit::Success);
+    }
+}
+
+// Stub for `bevy_seedling::sample::assets::SampleLoader`. We don't depend on
+// bevy_seedling because its `SeedlingPlugin` only registers the real loader
+// after starting a cpal audio stream — fatal on Linux CI without an audio
+// device. The processor's lookup-by-name uses the loader's
+// `TypePath::type_path()` string (see bevy_asset's AssetLoaders::push), so a
+// stub with a hand-written type_path resolves identically. SampleLoader's
+// `Settings = ()`, so meta deserialize/serialize round-trips trivially.
+//
+// Brittle if seedling ever changes Settings from `()` to a real struct.
+#[derive(TypePath)]
+#[type_path = "bevy_seedling::sample::assets"]
+#[type_name = "SampleLoader"]
+struct SeedlingSampleLoaderStub;
+
+#[derive(Asset, TypePath)]
+struct SeedlingSampleStubAsset;
+
+impl AssetLoader for SeedlingSampleLoaderStub {
+    type Asset = SeedlingSampleStubAsset;
+    type Settings = ();
+    type Error = std::io::Error;
+
+    async fn load(
+        &self,
+        _reader: &mut dyn Reader,
+        _settings: &Self::Settings,
+        _load_context: &mut LoadContext<'_>,
+    ) -> Result<Self::Asset, Self::Error> {
+        unreachable!("stub loader: registered for meta resolution at bake time, never loaded")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // The whole point of the stub is that `type_path()` matches seedling's
+    // real loader. If this assertion ever fails, the processor's name lookup
+    // would silently miss our stub and synthesize Ignore for audio assets.
+    #[test]
+    fn seedling_stub_typepath_matches_real_loader() {
+        assert_eq!(
+            SeedlingSampleLoaderStub::type_path(),
+            "bevy_seedling::sample::assets::SampleLoader",
+        );
+        assert_eq!(SeedlingSampleLoaderStub::short_type_path(), "SampleLoader");
     }
 }

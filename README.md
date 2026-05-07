@@ -29,12 +29,19 @@ plugins:
   CompressedImageSaver>` as the default processor for `png` / `jpg` /
   `jpeg` (this is `ImagePlugin`'s built-in behavior when the
   `compressed_image_saver` feature is on).
-- `GltfPlugin` and `SeedlingPlugin` — pulled in solely so the processor
-  can resolve `loader: "..."` strings inside source `.meta` files.
+- `GltfPlugin` and a manual `ShaderLoader` registration — pulled in
+  solely so the processor can resolve `bevy_gltf::loader::GltfLoader`
+  and `bevy_shader::shader::ShaderLoader` referenced by source `.meta`
+  files (or synthesized for files without metas).
+- A hand-rolled stub for `bevy_seedling::sample::assets::SampleLoader`
+  with the right `TypePath` — the processor's lookup-by-name resolves
+  to it at meta deserialize time. We avoid pulling in `bevy_seedling`
+  because its plugin only registers the real loader after starting a
+  cpal audio stream, which fails on Linux CI without an audio device.
 
-Other asset types (shaders, scenes, custom loaders, etc.) need their
-own plugin or `register_asset_loader` call added to `run_bake_app`,
-otherwise their source `.meta` files fail to deserialize.
+Other asset types (scenes, custom loaders, etc.) need their own plugin
+or stub registration added to `run_bake_app`, otherwise their source
+`.meta` files fail to deserialize.
 
 `AssetProcessor` then walks the input tree and produces an output tree
 at the same relative paths. Images get compressed to KTX2 in place
@@ -73,8 +80,6 @@ uncompressed.
 - **clang** — `ctt-compressonator` (the encoder behind
   `CompressedImageSaver`) uses `-march=knl`, which GCC ≥ 15 doesn't
   recognize. Set `CXX=clang++` if the default compiler is GCC.
-- **Linux only:** `libasound2-dev` and `pkg-config` — `bevy_seedling`
-  pulls in `firewheel`/`cpal`, which links ALSA.
 
 ## Caveats
 
